@@ -125,7 +125,7 @@ jobs:
       # Tags like home-operations/containers: semantic version, raw upstream version, rolling
       - name: Get App Options
         id: options
-        working-directory: apps/${{ matrix.app }}
+        working-directory: ${{ github.workspace }}/apps/${{ matrix.app }}
         run: |
           variable() {
             buildx bake --list type=variables,format=json --progress=quiet \
@@ -159,7 +159,7 @@ jobs:
           echo "version ${version}, tags: $(echo $tags)"
 
       - name: Build App
-        working-directory: apps/${{ matrix.app }}
+        working-directory: ${{ github.workspace }}/apps/${{ matrix.app }}
         env:
           VERSION: ${{ steps.options.outputs.version }}
           SOURCE: ${{ steps.options.outputs.source }}
