@@ -85,7 +85,6 @@ jobs:
       matrix:
         app: ${{ fromJSON(needs.changed.outputs.apps) }}
     env:
-      APP: ${{ matrix.app }}
       RELEASE: ${{ github.ref_name == 'main' }}
       NO_CACHE: ${{ inputs.no-cache || false }}
       # renovate: datasource=github-releases depName=docker/buildx
@@ -176,24 +175,34 @@ jobs:
             semantic=$(date +%Y.%-m.%-d)
           fi
 
-          tags=$(printf '%s\n' "$semantic" "$raw" rolling | awk '!seen[$0]++')
+          # The bake file's APP is the image name, apps/sonarr-develop pushes pre-releases to sonarr.
+          # Semver has no fourth number, the build goes in the pre-release: 5.0.0.2870 -> 5.0.0-dev.2870
+          image=$(variable APP)
+          prerelease=$(variable PRERELEASE)
+          if [[ -n "$prerelease" ]]; then
+            tags=$(printf '%s\n' "${semantic}-${prerelease}.${raw##*.}" "rolling-${prerelease}")
+          else
+            tags=$(printf '%s\n' "$semantic" "$raw" rolling | awk '!seen[$0]++')
+          fi
           {
             echo "version=${version}"
             echo "source=${source}"
+            echo "image=${image}"
             echo "platforms=${platforms}"
             echo "tags<<EOF"
             for registry in "$FORGEJO_REGISTRY" "$GHCR_REGISTRY"; do
-              for tag in $tags; do echo "--set=image.tags=${registry}/${APP}:${tag}"; done
+              for tag in $tags; do echo "--set=image.tags=${registry}/${image}:${tag}"; done
             done
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
-          echo "version ${version}, tags: $(echo $tags)"
+          echo "version ${version}, image ${image}, tags: $(echo $tags)"
 
       - name: Build App
         working-directory: ${{ github.workspace }}/apps/${{ matrix.app }}
         env:
           VERSION: ${{ steps.options.outputs.version }}
           SOURCE: ${{ steps.options.outputs.source }}
+          IMAGE: ${{ steps.options.outputs.image }}
           PLATFORMS: ${{ steps.options.outputs.platforms }}
           TAGS: ${{ steps.options.outputs.tags }}
         run: |
@@ -210,7 +219,7 @@ jobs:
           buildx bake image --builder buildkitd \
             --set=image.platform="$PLATFORMS" \
             --set=image.no-cache="$NO_CACHE" \
-            --set=image.labels.org.opencontainers.image.title="$APP" \
+            --set=image.labels.org.opencontainers.image.title="$IMAGE" \
             --set=image.labels.org.opencontainers.image.version="$VERSION" \
             --set=image.labels.org.opencontainers.image.revision="$GITHUB_SHA" \
             --set=image.labels.org.opencontainers.image.source="$GITHUB_REPOSITORY_URL" \
@@ -218,5 +227,5 @@ jobs:
             --metadata-file "${RUNNER_TEMP}/metadata.json" \
             "${output[@]}"
           if [[ "$RELEASE" == true ]]; then
-            echo "pushed ${APP}@$(jq -r '.image["containerimage.digest"]' "${RUNNER_TEMP}/metadata.json")"
+            echo "pushed ${IMAGE}@$(jq -r '.image["containerimage.digest"]' "${RUNNER_TEMP}/metadata.json")"
           fi

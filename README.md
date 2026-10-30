@@ -1,17 +1,42 @@
 # containers
 
-Container images for [home-ops](https://github.com/Untersander/home-ops), based on [home-operations/containers](https://github.com/home-operations/containers): one folder per app in [`apps/`](./apps) with a `Dockerfile` and a `docker-bake.hcl`, whose `VERSION` Renovate keeps up to date.
+Container images for [home-ops](https://github.com/Untersander/home-ops), based on [home-operations/containers](https://github.com/home-operations/containers): one folder per app or release channel in [`apps/`](./apps) with a `Dockerfile` and a `docker-bake.hcl`, whose `VERSION` Renovate keeps up to date.
 
 The source is on the cluster's Forgejo (`git.k8s.garden/jan/containers`) and mirrored to [github.com/Untersander/containers](https://github.com/Untersander/containers).
 
 | App | Image | Contents |
 | --- | --- | --- |
 | [dnsmasq](./apps/dnsmasq) | `ghcr.io/untersander/dnsmasq`, `git.k8s.garden/jan/dnsmasq` | Alpine's `dnsmasq-dnssec-nftset` (dnsmasq with nftables sets), entrypoint `dnsmasq --keep-in-foreground` |
+| [radarr](./apps/radarr) | `ghcr.io/untersander/radarr`, `git.k8s.garden/jan/radarr` | Stable GitHub release (`master` branch) |
+| [radarr-develop](./apps/radarr-develop) | Same image, pre-release tags | Pre-release (`develop` branch) |
+| [sonarr](./apps/sonarr) | `ghcr.io/untersander/sonarr`, `git.k8s.garden/jan/sonarr` | Stable GitHub release (`main` branch) |
+| [sonarr-develop](./apps/sonarr-develop) | Same image, pre-release tags | Pre-release (`develop` branch) |
 
 ## Tags
 
 Like home-operations: the semantic version (`2.92.0`), the upstream version without the Alpine release (`2.92_p2`) and `rolling`.
 Rebuilds (new Alpine base, new `-rN` package) overwrite the tags, so pin the digest: `ghcr.io/untersander/dnsmasq:2.92.0@sha256:...`.
+
+Pre-releases are semver: `5.0.0-dev.2870` and `rolling-dev`, with `dev` from `PRERELEASE` in the bake file. Semver has no fourth number and Docker tags can't contain `+`, so the upstream build number is the last pre-release identifier.
+
+Stable tags need no Renovate rule: docker versioning, Renovate's default, ignores `-dev` tags as another flavour of the image. To follow pre-releases, use a three-part or pre-release tag and add this rule in the repository that uses the image:
+
+```json5
+{
+  description: 'Follow Sonarr pre-releases',
+  matchPackageNames: ['ghcr.io/untersander/sonarr'],
+  versioning: 'semver',
+  ignoreUnstable: false,
+}
+```
+
+| Tag | Without the rule | With the rule |
+| --- | --- | --- |
+| `4.0.20` | Stable releases | Stable releases and pre-releases |
+| `5.0.0-dev.2870` | No updates | Stable releases and pre-releases |
+| `4.0.20.3014` | Stable releases | No updates, not semver |
+
+A stable release sorts above its own pre-releases, so `4.0.19-dev.3011` is skipped if `4.0.19` is already out, and following resumes at the next pre-release of a higher version.
 
 ## Builds
 
@@ -34,6 +59,7 @@ docker run --rm dnsmasq:2.92_p2-r0 --version
 
 [`.forgejo/workflows/renovate.yaml`](./.forgejo/workflows/renovate.yaml) runs nightly, with the rules in [`.renovaterc.json5`](./.renovaterc.json5).
 Package versions come from Repology (`alpine_3_24/<package>`). When the Alpine base moves to a new minor, update these names and `allowedVersions` together.
+Radarr and Sonarr versions come from their GitHub releases, where Renovate skips releases marked as pre-release. The `-develop` apps follow the `develop` branch through the Servarr update services (`customDatasources`, same as home-operations). A new Sonarr major needs a bump of `version=` in `sonarr-develop`.
 
 ## Setup
 

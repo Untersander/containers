@@ -17,6 +17,23 @@
   prHourlyLimit: 5,
   rangeStrategy: 'bump',
   ignoreTests: true,
+  customDatasources: {
+    'servarr-develop': {
+      defaultRegistryUrlTemplate: 'https://{{packageName}}.servarr.com/v1/update/develop/changes?os=linux&runtime=netcore',
+      format: 'json',
+      transformTemplates: [
+        '{"releases":[{"version": $[0].version}]}',
+      ],
+    },
+    // version= selects the major, this needs a bump for Sonarr 6
+    'sonarr-develop': {
+      defaultRegistryUrlTemplate: 'https://services.sonarr.tv/v1/update/develop/changes?os=linux&runtime=netcore&version=5.0',
+      format: 'json',
+      transformTemplates: [
+        '{"releases":[{"version": $[0].version}]}',
+      ],
+    },
+  },
   customManagers: [
     {
       customType: 'regex',
@@ -54,6 +71,17 @@
       commitMessageTopic: '{{depName}}',
       semanticCommitScope: '{{parentDir}}',
       semanticCommitType: 'release',
+    },
+    {
+      description: 'Sonarr and Radarr tag their releases with a v prefix, pre-releases are skipped (apps/*-develop use the custom datasources)',
+      matchDatasources: [
+        'github-releases',
+      ],
+      matchPackageNames: [
+        'Sonarr/Sonarr',
+        'Radarr/Radarr',
+      ],
+      extractVersion: '^v(?<version>.+)$',
     },
     {
       description: 'Allowed Alpine Version for Base Images, a new Alpine also needs the alpine_3_xx repology names in docker-bake.hcl',
