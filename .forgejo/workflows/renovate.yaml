@@ -1,0 +1,33 @@
+# Renovate for this repository, on the cluster's Forgejo runner (same setup as home-ops-internal).
+# Repository secrets: RENOVATE_TOKEN (Forgejo access token, repository + issue read/write),
+# RENOVATE_GITHUB_COM_TOKEN (GitHub token without scopes, for presets, release notes and rate limits)
+name: Renovate
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "52 2 * * *"
+
+concurrency:
+  group: renovate
+  cancel-in-progress: false
+
+jobs:
+  renovate:
+    runs-on: ubuntu-latest
+    steps:
+      # The runner has no Docker, so Renovate runs from npm instead of renovatebot/github-action
+      - name: Setup Node
+        uses: https://github.com/actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.22.1
+
+      - name: Run Renovate
+        run: npx --yes renovate@44.186.2
+        env:
+          RENOVATE_PLATFORM: forgejo
+          RENOVATE_ENDPOINT: https://git.k8s.garden/api/v1
+          RENOVATE_REPOSITORIES: jan/containers
+          RENOVATE_TOKEN: ${{ secrets.RENOVATE_TOKEN }}
+          RENOVATE_GITHUB_COM_TOKEN: ${{ secrets.RENOVATE_GITHUB_COM_TOKEN }}
+          LOG_LEVEL: info

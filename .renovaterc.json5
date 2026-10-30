@@ -1,0 +1,114 @@
+{
+  $schema: 'https://docs.renovatebot.com/renovate-schema.json',
+  // Same setup as home-ops-internal, app rules from home-operations/containers
+  extends: [
+    'github>home-operations/renovate-presets#10.0.1',
+    ':semanticCommits',
+    ':timezone(Europe/Zurich)',
+  ],
+  baseBranchPatterns: [
+    'main',
+  ],
+  labels: [
+    'dependencies',
+    'renovate',
+  ],
+  prConcurrentLimit: 5,
+  prHourlyLimit: 5,
+  rangeStrategy: 'bump',
+  ignoreTests: true,
+  customManagers: [
+    {
+      customType: 'regex',
+      description: 'Process Annotations in Docker Bake',
+      managerFilePatterns: [
+        '/(^|/)docker-bake\\.hcl$/',
+      ],
+      matchStrings: [
+        'datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)( versioning=(?<versioning>\\S+))?\\n.+ = "(?<currentValue>[^"]+)"',
+      ],
+      datasourceTemplate: '{{#if datasource}}{{{datasource}}}{{else}}github-releases{{/if}}',
+      versioningTemplate: '{{#if versioning}}{{{versioning}}}{{else}}semver{{/if}}',
+    },
+    {
+      customType: 'regex',
+      description: 'Renovate version in the Forgejo workflow (runs from npm)',
+      managerFilePatterns: [
+        '/^\\.forgejo/workflows/.+\\.ya?ml$/',
+      ],
+      matchStrings: [
+        'npx --yes renovate@(?<currentValue>\\S+)',
+      ],
+      depNameTemplate: 'renovate',
+      datasourceTemplate: 'npm',
+    },
+  ],
+  packageRules: [
+    {
+      description: 'Release Rules for App Updates',
+      matchFileNames: [
+        'apps/**',
+      ],
+      additionalBranchPrefix: '{{parentDir}}-',
+      commitMessageExtra: '( {{currentVersion}} → {{newVersion}} )',
+      commitMessageTopic: '{{depName}}',
+      semanticCommitScope: '{{parentDir}}',
+      semanticCommitType: 'release',
+    },
+    {
+      description: 'Allowed Alpine Version for Base Images, a new Alpine also needs the alpine_3_xx repology names in docker-bake.hcl',
+      matchDatasources: [
+        'docker',
+      ],
+      matchFileNames: [
+        '**/Dockerfile',
+      ],
+      matchPackageNames: [
+        '/alpine/',
+      ],
+      allowedVersions: '/^3\\.24\\./',
+    },
+    {
+      description: 'show the tag alongside the short digest on digest-only updates',
+      matchUpdateTypes: [
+        'digest',
+      ],
+      commitMessageExtra: '({{#if newValue}}{{newValue}}: {{/if}}{{currentDigestShort}} ➔ {{newDigestShort}})',
+    },
+    {
+      description: 'automerge non-breaking updates (branch automerge, no PR opened)',
+      matchUpdateTypes: [
+        'minor',
+        'patch',
+        'digest',
+        'pin',
+        'pinDigest',
+      ],
+      automerge: true,
+    },
+    {
+      description: 'App updates are automerged once the test build on the Renovate branch passed (release workflow)',
+      matchFileNames: [
+        'apps/**',
+      ],
+      automerge: true,
+      ignoreTests: false,
+    },
+    {
+      matchUpdateTypes: [
+        'major',
+      ],
+      matchFileNames: [
+        '!apps/**',
+      ],
+      automerge: false,
+    },
+    {
+      description: 'Renovate itself and actions in the Forgejo workflows',
+      matchFileNames: [
+        '.forgejo/workflows/**',
+      ],
+      groupName: 'workflows',
+    },
+  ],
+}

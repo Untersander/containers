@@ -1,0 +1,187 @@
+# Builds the changed apps on the rootless buildkitd in the cluster (home-ops: apps/buildkit) and pushes
+# them from main to the Forgejo registry and ghcr.io. Other branches (Renovate) only build, as a test.
+# Repository secrets: REGISTRY_TOKEN (Forgejo access token, package read/write),
+# GHCR_TOKEN (GitHub classic token with write:packages)
+name: Release
+
+on:
+  push:
+    branches:
+      - "**"
+    paths:
+      - apps/**
+  workflow_dispatch:
+    inputs:
+      app:
+        type: string
+        description: App Name
+        required: true
+      no-cache:
+        type: boolean
+        description: No Cache
+        required: false
+        default: false
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  FORGEJO_REGISTRY: git.k8s.garden/jan
+  GHCR_REGISTRY: ghcr.io/untersander
+  GHCR_USER: Untersander
+  # ghcr.io links the packages to the repository through this label
+  GITHUB_REPOSITORY_URL: https://github.com/Untersander/containers
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  changed:
+    name: Get Changed Apps
+    runs-on: ubuntu-latest
+    outputs:
+      apps: ${{ steps.apps.outputs.apps }}
+    steps:
+      - name: Checkout
+        uses: https://github.com/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Get Apps
+        id: apps
+        env:
+          INPUT_APP: ${{ inputs.app }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [[ -n "$INPUT_APP" ]]; then
+            apps="$INPUT_APP"
+          else
+            if git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+              base="$BEFORE"
+            elif [[ "$GITHUB_REF_NAME" != main ]]; then
+              # New branch: everything since it left main
+              base=$(git merge-base origin/main HEAD)
+            else
+              # First push: all apps
+              base=$(git hash-object -t tree /dev/null)
+            fi
+            apps=$(git diff --name-only "$base" HEAD -- apps | cut -d/ -f2 | sort -u)
+          fi
+          # Deleted apps show up in the diff too
+          apps=$(for app in $apps; do [[ -f "apps/${app}/docker-bake.hcl" ]] && echo "$app"; done | jq -Rnc '[inputs]')
+          echo "apps: ${apps}"
+          echo "apps=${apps}" >> "$GITHUB_OUTPUT"
+
+  build:
+    if: ${{ needs.changed.outputs.apps != '[]' }}
+    name: Build ${{ matrix.app }}
+    needs:
+      - changed
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        app: ${{ fromJSON(needs.changed.outputs.apps) }}
+    env:
+      APP: ${{ matrix.app }}
+      RELEASE: ${{ github.ref_name == 'main' }}
+      NO_CACHE: ${{ inputs.no-cache || false }}
+      # renovate: datasource=github-releases depName=docker/buildx
+      BUILDX_VERSION: v0.38.1
+    steps:
+      - name: Checkout
+        uses: https://github.com/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The runner has no Docker: standalone buildx with the remote driver, so the bake files work as
+      # with `docker buildx bake` locally
+      - name: Setup Buildx
+        working-directory: /usr/local/bin
+        run: |
+          curl -fsSLo "buildx-${BUILDX_VERSION}.linux-amd64" \
+            "https://github.com/docker/buildx/releases/download/${BUILDX_VERSION}/buildx-${BUILDX_VERSION}.linux-amd64"
+          curl -fsSL "https://github.com/docker/buildx/releases/download/${BUILDX_VERSION}/checksums.txt" \
+            | grep " \*buildx-${BUILDX_VERSION}.linux-amd64$" | sha256sum -c
+          mv "buildx-${BUILDX_VERSION}.linux-amd64" buildx
+          chmod +x buildx
+          buildx create --name buildkitd --driver remote --use tcp://buildkitd.buildkit.svc.cluster.local:1234
+          buildx inspect --bootstrap
+
+      # buildx hands the credentials to buildkitd, which pushes
+      - name: Login to Registries
+        if: ${{ env.RELEASE == 'true' }}
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          FORGEJO_USER: ${{ github.repository_owner }}
+        run: |
+          mkdir -p ~/.docker
+          jq -n '{auths: {
+            "git.k8s.garden": {auth: (env.FORGEJO_USER + ":" + env.REGISTRY_TOKEN | @base64)},
+            "ghcr.io": {auth: (env.GHCR_USER + ":" + env.GHCR_TOKEN | @base64)}
+          }}' > ~/.docker/config.json
+
+      # Tags like home-operations/containers: semantic version, raw upstream version, rolling
+      - name: Get App Options
+        id: options
+        working-directory: apps/${{ matrix.app }}
+        run: |
+          variable() {
+            buildx bake --list type=variables,format=json --progress=quiet \
+              | jq -r --arg name "$1" '.[] | select(.name == $name) | .value'
+          }
+          version=$(variable VERSION)
+          source=$(variable SOURCE)
+          platforms=$(buildx bake image-all --print --progress=quiet | jq -r '.target."image-all".platforms | join(",")')
+
+          # 2.92_p2-r0 -> raw 2.92_p2, semantic 2.92.0
+          raw="${version#v}"
+          raw="${raw%%-*}"
+          if [[ "$raw" =~ ^([0-9]+)(\.([0-9]+))?(\.([0-9]+))? ]]; then
+            semantic="${BASH_REMATCH[1]}.${BASH_REMATCH[3]:-0}.${BASH_REMATCH[5]:-0}"
+          else
+            raw="$version"
+            semantic=$(date +%Y.%-m.%-d)
+          fi
+
+          tags=$(printf '%s\n' "$semantic" "$raw" rolling | awk '!seen[$0]++')
+          {
+            echo "version=${version}"
+            echo "source=${source}"
+            echo "platforms=${platforms}"
+            echo "tags<<EOF"
+            for registry in "$FORGEJO_REGISTRY" "$GHCR_REGISTRY"; do
+              for tag in $tags; do echo "--set=image.tags=${registry}/${APP}:${tag}"; done
+            done
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "version ${version}, tags: $(echo $tags)"
+
+      - name: Build App
+        working-directory: apps/${{ matrix.app }}
+        env:
+          VERSION: ${{ steps.options.outputs.version }}
+          SOURCE: ${{ steps.options.outputs.source }}
+          PLATFORMS: ${{ steps.options.outputs.platforms }}
+          TAGS: ${{ steps.options.outputs.tags }}
+        run: |
+          if [[ "$RELEASE" == true ]]; then
+            mapfile -t tags <<< "$TAGS"
+            output=(--set=image.output=type=image,push=true "${tags[@]}")
+          else
+            output=(--set=image.output=type=cacheonly)
+          fi
+          buildx bake image \
+            --set=image.platform="$PLATFORMS" \
+            --set=image.no-cache="$NO_CACHE" \
+            --set=image.labels.org.opencontainers.image.title="$APP" \
+            --set=image.labels.org.opencontainers.image.version="$VERSION" \
+            --set=image.labels.org.opencontainers.image.revision="$GITHUB_SHA" \
+            --set=image.labels.org.opencontainers.image.source="$GITHUB_REPOSITORY_URL" \
+            --set=image.labels.org.opencontainers.image.documentation="$SOURCE" \
+            --metadata-file "${RUNNER_TEMP}/metadata.json" \
+            "${output[@]}"
+          if [[ "$RELEASE" == true ]]; then
+            echo "pushed ${APP}@$(jq -r '.image["containerimage.digest"]' "${RUNNER_TEMP}/metadata.json")"
+          fi
