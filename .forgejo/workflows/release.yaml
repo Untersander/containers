@@ -88,8 +88,6 @@ jobs:
       APP: ${{ matrix.app }}
       RELEASE: ${{ github.ref_name == 'main' }}
       NO_CACHE: ${{ inputs.no-cache || false }}
-      # Explicit instead of ~/.docker, shared by the login and build steps
-      DOCKER_CONFIG: ${{ runner.temp }}/docker
       # renovate: datasource=github-releases depName=docker/buildx
       BUILDX_VERSION: v0.38.1
     steps:
@@ -115,6 +113,8 @@ jobs:
       - name: Login to Registries
         if: ${{ github.ref_name == 'main' }}
         env:
+          # Explicit instead of ~/.docker, shared with the build step (runner isn't available in the job's env)
+          DOCKER_CONFIG: ${{ runner.temp }}/docker
           REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
           FORGEJO_USER: ${{ github.repository_owner }}
@@ -194,6 +194,7 @@ jobs:
       - name: Build App
         working-directory: ${{ github.workspace }}/apps/${{ matrix.app }}
         env:
+          DOCKER_CONFIG: ${{ runner.temp }}/docker
           VERSION: ${{ steps.options.outputs.version }}
           SOURCE: ${{ steps.options.outputs.source }}
           PLATFORMS: ${{ steps.options.outputs.platforms }}
