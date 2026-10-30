@@ -113,8 +113,6 @@ jobs:
       - name: Login to Registries
         if: ${{ github.ref_name == 'main' }}
         env:
-          # Explicit instead of ~/.docker, shared with the build step (runner isn't available in the job's env)
-          DOCKER_CONFIG: ${{ runner.temp }}/docker
           REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
           FORGEJO_USER: ${{ github.repository_owner }}
@@ -148,11 +146,11 @@ jobs:
             exit 1
           fi
 
-          mkdir -p "$DOCKER_CONFIG"
+          mkdir -p ~/.docker
           jq -n '{auths: {
             "git.k8s.garden": {auth: (env.FORGEJO_USER + ":" + env.REGISTRY_TOKEN | @base64)},
             "ghcr.io": {auth: (env.GHCR_USER + ":" + env.GHCR_TOKEN | @base64)}
-          }}' > "${DOCKER_CONFIG}/config.json"
+          }}' > ~/.docker/config.json
           echo "logged in as ${FORGEJO_USER} (scope ${scope}) and ${GHCR_USER} (scopes ${scopes})"
 
       # Tags like home-operations/containers: semantic version, raw upstream version, rolling
@@ -194,15 +192,14 @@ jobs:
       - name: Build App
         working-directory: ${{ github.workspace }}/apps/${{ matrix.app }}
         env:
-          DOCKER_CONFIG: ${{ runner.temp }}/docker
           VERSION: ${{ steps.options.outputs.version }}
           SOURCE: ${{ steps.options.outputs.source }}
           PLATFORMS: ${{ steps.options.outputs.platforms }}
           TAGS: ${{ steps.options.outputs.tags }}
         run: |
           if [[ "$RELEASE" == true ]]; then
-            if [[ ! -f "${DOCKER_CONFIG}/config.json" ]]; then
-              echo "::error::No registry credentials in ${DOCKER_CONFIG}, did the login step run?"
+            if [[ ! -f ~/.docker/config.json ]]; then
+              echo "::error::No registry credentials in ~/.docker/config.json, did the login step run?"
               exit 1
             fi
             mapfile -t tags <<< "$TAGS"
@@ -210,7 +207,7 @@ jobs:
           else
             output=(--set=image.output=type=cacheonly)
           fi
-          buildx bake image \
+          buildx bake image --builder buildkitd \
             --set=image.platform="$PLATFORMS" \
             --set=image.no-cache="$NO_CACHE" \
             --set=image.labels.org.opencontainers.image.title="$APP" \
