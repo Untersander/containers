@@ -88,6 +88,8 @@ jobs:
       APP: ${{ matrix.app }}
       RELEASE: ${{ github.ref_name == 'main' }}
       NO_CACHE: ${{ inputs.no-cache || false }}
+      # Explicit instead of ~/.docker, shared by the login and build steps
+      DOCKER_CONFIG: ${{ runner.temp }}/docker
       # renovate: datasource=github-releases depName=docker/buildx
       BUILDX_VERSION: v0.38.1
     steps:
@@ -108,19 +110,50 @@ jobs:
           buildx create --name buildkitd --driver remote --use tcp://buildkitd.buildkit.svc.cluster.local:1234
           buildx inspect --bootstrap
 
-      # buildx hands the credentials to buildkitd, which pushes
+      # buildx hands the credentials to buildkitd, which pushes. The tokens are checked here because
+      # a push without (valid) credentials only fails at the end with a bare 401
       - name: Login to Registries
-        if: ${{ env.RELEASE == 'true' }}
+        if: ${{ github.ref_name == 'main' }}
         env:
           REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
           FORGEJO_USER: ${{ github.repository_owner }}
         run: |
-          mkdir -p ~/.docker
+          set -o pipefail
+          for secret in REGISTRY_TOKEN GHCR_TOKEN; do
+            if [[ -z "${!secret}" ]]; then
+              echo "::error::Secret ${secret} is empty or not set"
+              exit 1
+            fi
+          done
+
+          # Forgejo: the registry token's JWT carries the scope of the access token (anonymous: UserID -1)
+          jwt=$(printf 'user = "%s:%s"\n' "$FORGEJO_USER" "$REGISTRY_TOKEN" \
+            | curl -fsS -K - "https://git.k8s.garden/v2/token?service=container_registry" | jq -r .token) \
+            || { echo "::error::REGISTRY_TOKEN was rejected by git.k8s.garden (user ${FORGEJO_USER})"; exit 1; }
+          payload=$(cut -d. -f2 <<< "$jwt" | tr '_-' '/+')
+          while (( ${#payload} % 4 )); do payload+="="; done
+          scope=$(base64 -d <<< "$payload" | jq -r '.Scope')
+          if [[ "$scope" != *write:package* && "$scope" != all ]]; then
+            echo "::error::REGISTRY_TOKEN has scope '${scope}', it needs package read/write (write:package)"
+            exit 1
+          fi
+
+          # GitHub: classic tokens list their scopes in X-OAuth-Scopes
+          scopes=$(printf 'header = "Authorization: Bearer %s"\n' "$GHCR_TOKEN" \
+            | curl -fsS -K - -o /dev/null -D - https://api.github.com/user | sed -n 's/^x-oauth-scopes: *//Ip' | tr -d '\r') \
+            || { echo "::error::GHCR_TOKEN was rejected by GitHub"; exit 1; }
+          if [[ "$scopes" != *write:packages* ]]; then
+            echo "::error::GHCR_TOKEN has scopes '${scopes}', it needs a classic token with write:packages"
+            exit 1
+          fi
+
+          mkdir -p "$DOCKER_CONFIG"
           jq -n '{auths: {
             "git.k8s.garden": {auth: (env.FORGEJO_USER + ":" + env.REGISTRY_TOKEN | @base64)},
             "ghcr.io": {auth: (env.GHCR_USER + ":" + env.GHCR_TOKEN | @base64)}
-          }}' > ~/.docker/config.json
+          }}' > "${DOCKER_CONFIG}/config.json"
+          echo "logged in as ${FORGEJO_USER} (scope ${scope}) and ${GHCR_USER} (scopes ${scopes})"
 
       # Tags like home-operations/containers: semantic version, raw upstream version, rolling
       - name: Get App Options
@@ -167,6 +200,10 @@ jobs:
           TAGS: ${{ steps.options.outputs.tags }}
         run: |
           if [[ "$RELEASE" == true ]]; then
+            if [[ ! -f "${DOCKER_CONFIG}/config.json" ]]; then
+              echo "::error::No registry credentials in ${DOCKER_CONFIG}, did the login step run?"
+              exit 1
+            fi
             mapfile -t tags <<< "$TAGS"
             output=(--set=image.output=type=image,push=true "${tags[@]}")
           else
