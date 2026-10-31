@@ -73,15 +73,28 @@
       semanticCommitType: 'release',
     },
     {
-      description: 'Sonarr and Radarr tag their releases with a v prefix, pre-releases are skipped (apps/*-develop use the custom datasources)',
+      description: 'Sonarr, Radarr and Prowlarr tag their releases with a v prefix, pre-releases are skipped (apps/*-develop use the custom datasources)',
       matchDatasources: [
         'github-releases',
       ],
       matchPackageNames: [
-        'Sonarr/Sonarr',
+        'Prowlarr/Prowlarr',
         'Radarr/Radarr',
+        'Sonarr/Sonarr',
       ],
       extractVersion: '^v(?<version>.+)$',
+    },
+    {
+      description: 'Bazarr and SABnzbd pre-releases come from GitHub, their stable versions belong to apps/bazarr and apps/sabnzbd',
+      matchDatasources: [
+        'github-releases',
+      ],
+      matchFileNames: [
+        'apps/bazarr-develop/**',
+        'apps/sabnzbd-develop/**',
+      ],
+      ignoreUnstable: false,
+      allowedVersions: '/(alpha|beta|rc)/i',
     },
     {
       description: 'Allowed Alpine Version for Base Images, a new Alpine also needs the alpine_3_xx repology names in docker-bake.hcl',
@@ -95,6 +108,19 @@
         '/alpine/',
       ],
       allowedVersions: '/^3\\.24\\./',
+    },
+    {
+      description: 'Allowed Python Version for Base Images, the same minor as home-operations/containers',
+      matchDatasources: [
+        'docker',
+      ],
+      matchFileNames: [
+        '**/Dockerfile',
+      ],
+      matchPackageNames: [
+        'docker.io/library/python',
+      ],
+      allowedVersions: '/^3\\.14\\./',
     },
     {
       description: 'show the tag alongside the short digest on digest-only updates',

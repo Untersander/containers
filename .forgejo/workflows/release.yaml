@@ -176,11 +176,11 @@ jobs:
           fi
 
           # The bake file's APP is the image name, apps/sonarr-develop pushes pre-releases to sonarr.
-          # Semver has no fourth number, the build goes in the pre-release: 5.0.0.2870 -> 5.0.0-dev.2870
+          # Pre-release apps set TAG, the semver form of their version: 5.0.0.2870 -> 5.0.0-dev.2870
           image=$(variable APP)
-          prerelease=$(variable PRERELEASE)
+          prerelease=$(variable TAG)
           if [[ -n "$prerelease" ]]; then
-            tags=$(printf '%s\n' "${semantic}-${prerelease}.${raw##*.}" "rolling-${prerelease}")
+            tags=$(printf '%s\n' "$prerelease" rolling-dev)
           else
             tags=$(printf '%s\n' "$semantic" "$raw" rolling | awk '!seen[$0]++')
           fi

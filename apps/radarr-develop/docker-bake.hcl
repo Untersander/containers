@@ -10,9 +10,9 @@ variable "VERSION" {
   default = "7.0.0.10815"
 }
 
-// Semver pre-release identifier, the build follows it: 7.0.0.10815 -> 7.0.0-dev.10815
-variable "PRERELEASE" {
-  default = "dev"
+// Semver tag of the pre-release
+variable "TAG" {
+  default = regex_replace(VERSION, "\\.([0-9]+)$", "-dev.$1")
 }
 
 variable "SOURCE" {
@@ -33,7 +33,7 @@ target "image" {
 target "image-local" {
   inherits = ["image"]
   output = ["type=docker"]
-  tags = ["${APP}:${regex_replace(VERSION, "\\.([0-9]+)$", "-${PRERELEASE}.$1")}"]
+  tags = ["${APP}:${TAG}"]
 }
 
 target "image-all" {

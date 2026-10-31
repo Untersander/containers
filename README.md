@@ -7,8 +7,14 @@ The source is on the cluster's Forgejo (`git.k8s.garden/jan/containers`) and mir
 | App | Image | Contents |
 | --- | --- | --- |
 | [dnsmasq](./apps/dnsmasq) | `ghcr.io/untersander/dnsmasq`, `git.k8s.garden/jan/dnsmasq` | Alpine's `dnsmasq-dnssec-nftset` (dnsmasq with nftables sets), entrypoint `dnsmasq --keep-in-foreground` |
+| [bazarr](./apps/bazarr) | `ghcr.io/untersander/bazarr`, `git.k8s.garden/jan/bazarr` | Stable GitHub release |
+| [bazarr-develop](./apps/bazarr-develop) | Same image, pre-release tags | GitHub pre-release |
+| [prowlarr](./apps/prowlarr) | `ghcr.io/untersander/prowlarr`, `git.k8s.garden/jan/prowlarr` | Stable GitHub release (`master` branch) |
+| [prowlarr-develop](./apps/prowlarr-develop) | Same image, pre-release tags | Pre-release (`develop` branch) |
 | [radarr](./apps/radarr) | `ghcr.io/untersander/radarr`, `git.k8s.garden/jan/radarr` | Stable GitHub release (`master` branch) |
 | [radarr-develop](./apps/radarr-develop) | Same image, pre-release tags | Pre-release (`develop` branch) |
+| [sabnzbd](./apps/sabnzbd) | `ghcr.io/untersander/sabnzbd`, `git.k8s.garden/jan/sabnzbd` | Stable GitHub release |
+| [sabnzbd-develop](./apps/sabnzbd-develop) | Same image, pre-release tags | GitHub pre-release |
 | [sonarr](./apps/sonarr) | `ghcr.io/untersander/sonarr`, `git.k8s.garden/jan/sonarr` | Stable GitHub release (`main` branch) |
 | [sonarr-develop](./apps/sonarr-develop) | Same image, pre-release tags | Pre-release (`develop` branch) |
 
@@ -17,7 +23,7 @@ The source is on the cluster's Forgejo (`git.k8s.garden/jan/containers`) and mir
 Like home-operations: the semantic version (`2.92.0`), the upstream version without the Alpine release (`2.92_p2`) and `rolling`.
 Rebuilds (new Alpine base, new `-rN` package) overwrite the tags, so pin the digest: `ghcr.io/untersander/dnsmasq:2.92.0@sha256:...`.
 
-Pre-releases are semver: `5.0.0-dev.2870` and `rolling-dev`, with `dev` from `PRERELEASE` in the bake file. Semver has no fourth number and Docker tags can't contain `+`, so the upstream build number is the last pre-release identifier.
+Pre-releases are semver, from `TAG` in the bake file, plus `rolling-dev`: `5.0.0-dev.2870` for Sonarr, Radarr and Prowlarr, `1.6.3-beta.23` for Bazarr and `5.2.0-beta.2` for SABnzbd (upstream `5.2.0Beta2`). Semver has no fourth number and Docker tags can't contain `+`, so the upstream build number is the last pre-release identifier.
 
 Stable tags need no Renovate rule: docker versioning, Renovate's default, ignores `-dev` tags as another flavour of the image. To follow pre-releases, use a three-part or pre-release tag and add this rule in the repository that uses the image:
 
@@ -59,7 +65,7 @@ docker run --rm dnsmasq:2.92_p2-r0 --version
 
 [`.forgejo/workflows/renovate.yaml`](./.forgejo/workflows/renovate.yaml) runs nightly, with the rules in [`.renovaterc.json5`](./.renovaterc.json5).
 Package versions come from Repology (`alpine_3_24/<package>`). When the Alpine base moves to a new minor, update these names and `allowedVersions` together.
-Radarr and Sonarr versions come from their GitHub releases, where Renovate skips releases marked as pre-release. The `-develop` apps follow the `develop` branch through the Servarr update services (`customDatasources`, same as home-operations). A new Sonarr major needs a bump of `version=` in `sonarr-develop`.
+Stable versions come from GitHub releases, where Renovate skips releases marked as pre-release. The Sonarr, Radarr and Prowlarr `-develop` apps follow the `develop` branch through the Servarr update services (`customDatasources`, same as home-operations). A new Sonarr major needs a bump of `version=` in `sonarr-develop`. The Bazarr and SABnzbd `-develop` apps take only the pre-releases from GitHub.
 
 ## Setup
 
