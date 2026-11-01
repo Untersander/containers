@@ -63,7 +63,9 @@ docker run --rm dnsmasq:2.92_p2-r0 --version
 
 ## Renovate
 
-[`.forgejo/workflows/renovate.yaml`](./.forgejo/workflows/renovate.yaml) runs nightly, with the rules in [`.renovaterc.json5`](./.renovaterc.json5).
+[`.forgejo/workflows/renovate.yaml`](./.forgejo/workflows/renovate.yaml) runs hourly, with the rules in [`.renovaterc.json5`](./.renovaterc.json5).
+Branch automerge is fast-forward only, so each run merges one branch and rebases the others, which then have to pass their test build again before a later run can merge them.
+Reading the build status needs the branch name as `renovate%2F...` in the API path, so the gateway in front of Forgejo has to keep escaped slashes (home-ops [`clienttrafficpolicy.yaml`](https://github.com/Untersander/home-ops/blob/main/infra/envoy-gateway/config/clienttrafficpolicy.yaml)). Otherwise Renovate gets a 404 and aborts with `Repository has changed during renovation`.
 Package versions come from Repology (`alpine_3_24/<package>`). When the Alpine base moves to a new minor, update these names and `allowedVersions` together.
 Stable versions come from GitHub releases, where Renovate skips releases marked as pre-release. The Sonarr, Radarr and Prowlarr `-develop` apps follow the `develop` branch through the Servarr update services (`customDatasources`, same as home-operations). A new Sonarr major needs a bump of `version=` in `sonarr-develop`. The Bazarr and SABnzbd `-develop` apps take only the pre-releases from GitHub.
 

@@ -6,7 +6,8 @@ name: Renovate
 on:
   workflow_dispatch:
   schedule:
-    - cron: "52 2 * * *"
+    # Branch automerge is fast-forward only: one branch per run, the others are rebased and rebuilt
+    - cron: "52 * * * *"
 
 concurrency:
   group: renovate
@@ -20,10 +21,10 @@ jobs:
       - name: Setup Node
         uses: https://github.com/actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24.22.1
+          node-version: 24.22.2
 
       - name: Run Renovate
-        run: npx --yes renovate@44.186.2
+        run: npx --yes renovate@44.198.0
         env:
           RENOVATE_PLATFORM: forgejo
           RENOVATE_ENDPOINT: https://git.k8s.garden/api/v1
