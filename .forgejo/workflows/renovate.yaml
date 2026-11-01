@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
   schedule:
     # Branch automerge is fast-forward only: one branch per run, the others are rebased and rebuilt
-    - cron: "52 * * * *"
+    - cron: "52 6 * * *"
 
 concurrency:
   group: renovate
