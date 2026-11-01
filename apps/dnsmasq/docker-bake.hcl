@@ -37,3 +37,14 @@ target "image-all" {
     "linux/amd64"
   ]
 }
+
+target "test" {
+  contexts = {
+    app = "target:image"
+  }
+  dockerfile-inline = <<EOT
+FROM app
+RUN dnsmasq --test
+EOT
+  output = ["type=cacheonly"]
+}

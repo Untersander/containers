@@ -43,3 +43,16 @@ target "image-all" {
     "linux/amd64"
   ]
 }
+
+// Needs --allow=fs.read=../../tests
+target "test" {
+  contexts = {
+    app   = "target:image"
+    tests = "../../tests"
+  }
+  dockerfile-inline = <<EOT
+FROM app
+RUN --mount=from=tests,target=/tests SABNZBD__PORT=18080 bash /tests/startup.sh 18080
+EOT
+  output = ["type=cacheonly"]
+}

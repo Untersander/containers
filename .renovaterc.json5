@@ -62,14 +62,16 @@
   ],
   packageRules: [
     {
-      description: 'Release Rules for App Updates',
+      description: 'Release Rules for App Updates, all of them in one commit (majors too): Renovate restarts only once per run, so separate branches could not all merge in one run',
       matchFileNames: [
         'apps/**',
       ],
-      additionalBranchPrefix: '{{parentDir}}-',
-      commitMessageExtra: '( {{currentVersion}} → {{newVersion}} )',
-      commitMessageTopic: '{{depName}}',
-      semanticCommitScope: '{{parentDir}}',
+      groupName: 'apps',
+      additionalBranchPrefix: '',
+      separateMajorMinor: false,
+      commitBodyTable: true,
+      commitMessageExtra: '',
+      semanticCommitScope: 'apps',
       semanticCommitType: 'release',
     },
     {
@@ -130,8 +132,9 @@
       commitMessageExtra: '({{#if newValue}}{{newValue}}: {{/if}}{{currentDigestShort}} ➔ {{newDigestShort}})',
     },
     {
-      description: 'automerge non-breaking updates (branch automerge, no PR opened)',
+      description: 'automerge all updates (branch automerge, no PR opened)',
       matchUpdateTypes: [
+        'major',
         'minor',
         'patch',
         'digest',
@@ -141,28 +144,12 @@
       automerge: true,
     },
     {
-      description: 'App updates are automerged once the test build on the Renovate branch passed (release workflow)',
-      matchFileNames: [
-        'apps/**',
-      ],
-      automerge: true,
-      ignoreTests: false,
-    },
-    {
-      matchUpdateTypes: [
-        'major',
-      ],
-      matchFileNames: [
-        '!apps/**',
-      ],
-      automerge: false,
-    },
-    {
       description: 'Renovate itself and actions in the Forgejo workflows',
       matchFileNames: [
         '.forgejo/workflows/**',
       ],
       groupName: 'workflows',
+      separateMajorMinor: false,
     },
   ],
 }

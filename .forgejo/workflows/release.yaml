@@ -1,5 +1,6 @@
-# Builds the changed apps on the rootless buildkitd in the cluster (home-ops: apps/buildkit) and pushes
-# them from main to the Forgejo registry and ghcr.io. Other branches (Renovate) only build, as a test.
+# Builds the apps from main on the rootless buildkitd in the cluster (home-ops: apps/buildkit), tests that
+# they start and pushes them to the Forgejo registry and ghcr.io. An app that fails is not pushed, so it
+# keeps its last image, and the schedule tries it again.
 # Repository secrets: REGISTRY_TOKEN (Forgejo access token, package read/write),
 # GHCR_TOKEN (GitHub classic token with write:packages)
 name: Release
@@ -7,9 +8,9 @@ name: Release
 on:
   push:
     branches:
-      - "**"
-    paths:
-      - apps/**
+      - main
+  schedule:
+    - cron: "52 9 * * *"
   workflow_dispatch:
     inputs:
       app:
@@ -32,6 +33,8 @@ env:
   GHCR_USER: Untersander
   # ghcr.io links the packages to the repository through this label
   GITHUB_REPOSITORY_URL: https://github.com/Untersander/containers
+  # renovate: datasource=github-releases depName=docker/buildx
+  BUILDX_VERSION: v0.38.1
 
 defaults:
   run:
@@ -39,7 +42,7 @@ defaults:
 
 jobs:
   changed:
-    name: Get Changed Apps
+    name: Get Apps
     runs-on: ubuntu-latest
     outputs:
       apps: ${{ steps.apps.outputs.apps }}
@@ -48,6 +51,9 @@ jobs:
         uses: https://github.com/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+
+      - name: Setup Buildx
+        run: bash .forgejo/scripts/setup-buildx.sh
 
       - name: Get Apps
         id: apps
@@ -58,19 +64,23 @@ jobs:
           if [[ -n "$INPUT_APP" ]]; then
             apps="$INPUT_APP"
           else
+            # The apps changed by this push: a new base image keeps the tag
+            apps=""
             if git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
-              base="$BEFORE"
-            elif [[ "$GITHUB_REF_NAME" != main ]]; then
-              # New branch: everything since it left main
-              base=$(git merge-base origin/main HEAD)
-            else
-              # First push: all apps
-              base=$(git hash-object -t tree /dev/null)
+              apps=$(git diff --name-only "$BEFORE" HEAD -- apps | cut -d/ -f2)
             fi
-            apps=$(git diff --name-only "$base" HEAD -- apps | cut -d/ -f2 | sort -u)
+            # And every version without an image: new apps and builds that failed
+            for dir in apps/*/; do
+              ref=$(cd "$dir" && bash "${GITHUB_WORKSPACE}/.forgejo/scripts/app-tags.sh" | sed -n 1p)
+              if ! buildx imagetools inspect "${GHCR_REGISTRY}/${ref}" > /dev/null 2>&1; then
+                echo "${ref} has no image"
+                apps+=$'\n'"$(basename "$dir")"
+              fi
+            done
+            apps=$(sort -u <<< "$apps")
           fi
           # Deleted apps show up in the diff too
-          apps=$(for app in $apps; do [[ -f "apps/${app}/docker-bake.hcl" ]] && echo "$app"; done | jq -Rnc '[inputs]')
+          apps=$(for app in $apps; do if [[ -f "apps/${app}/docker-bake.hcl" ]]; then echo "$app"; fi; done | jq -Rnc '[inputs]')
           echo "apps: ${apps}"
           echo "apps=${apps}" >> "$GITHUB_OUTPUT"
 
@@ -85,32 +95,17 @@ jobs:
       matrix:
         app: ${{ fromJSON(needs.changed.outputs.apps) }}
     env:
-      RELEASE: ${{ github.ref_name == 'main' }}
       NO_CACHE: ${{ inputs.no-cache || false }}
-      # renovate: datasource=github-releases depName=docker/buildx
-      BUILDX_VERSION: v0.38.1
     steps:
       - name: Checkout
         uses: https://github.com/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # The runner has no Docker: standalone buildx with the remote driver, so the bake files work as
-      # with `docker buildx bake` locally
       - name: Setup Buildx
-        working-directory: /usr/local/bin
-        run: |
-          curl -fsSLo "buildx-${BUILDX_VERSION}.linux-amd64" \
-            "https://github.com/docker/buildx/releases/download/${BUILDX_VERSION}/buildx-${BUILDX_VERSION}.linux-amd64"
-          curl -fsSL "https://github.com/docker/buildx/releases/download/${BUILDX_VERSION}/checksums.txt" \
-            | grep " \*buildx-${BUILDX_VERSION}.linux-amd64$" | sha256sum -c
-          mv "buildx-${BUILDX_VERSION}.linux-amd64" buildx
-          chmod +x buildx
-          buildx create --name buildkitd --driver remote --use tcp://buildkitd.buildkit.svc.cluster.local:1234
-          buildx inspect --bootstrap
+        run: bash .forgejo/scripts/setup-buildx.sh
 
       # buildx hands the credentials to buildkitd, which pushes. The tokens are checked here because
       # a push without (valid) credentials only fails at the end with a bare 401
       - name: Login to Registries
-        if: ${{ github.ref_name == 'main' }}
         env:
           REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
@@ -152,7 +147,6 @@ jobs:
           }}' > ~/.docker/config.json
           echo "logged in as ${FORGEJO_USER} (scope ${scope}) and ${GHCR_USER} (scopes ${scopes})"
 
-      # Tags like home-operations/containers: semantic version, raw upstream version, rolling
       - name: Get App Options
         id: options
         working-directory: ${{ github.workspace }}/apps/${{ matrix.app }}
@@ -163,27 +157,9 @@ jobs:
           }
           version=$(variable VERSION)
           source=$(variable SOURCE)
-          platforms=$(buildx bake image-all --print --progress=quiet | jq -r '.target."image-all".platforms | join(",")')
-
-          # 2.92_p2-r0 -> raw 2.92_p2, semantic 2.92.0
-          raw="${version#v}"
-          raw="${raw%%-*}"
-          if [[ "$raw" =~ ^([0-9]+)(\.([0-9]+))?(\.([0-9]+))? ]]; then
-            semantic="${BASH_REMATCH[1]}.${BASH_REMATCH[3]:-0}.${BASH_REMATCH[5]:-0}"
-          else
-            raw="$version"
-            semantic=$(date +%Y.%-m.%-d)
-          fi
-
-          # The bake file's APP is the image name, apps/sonarr-develop pushes pre-releases to sonarr.
-          # Pre-release apps set TAG, the semver form of their version: 5.0.0.2870 -> 5.0.0-dev.2870
           image=$(variable APP)
-          prerelease=$(variable TAG)
-          if [[ -n "$prerelease" ]]; then
-            tags=$(printf '%s\n' "$prerelease" rolling-dev)
-          else
-            tags=$(printf '%s\n' "$semantic" "$raw" rolling | awk '!seen[$0]++')
-          fi
+          platforms=$(buildx bake image-all --print --progress=quiet | jq -r '.target."image-all".platforms | join(",")')
+          refs=$(bash "${GITHUB_WORKSPACE}/.forgejo/scripts/app-tags.sh")
           {
             echo "version=${version}"
             echo "source=${source}"
@@ -191,13 +167,23 @@ jobs:
             echo "platforms=${platforms}"
             echo "tags<<EOF"
             for registry in "$FORGEJO_REGISTRY" "$GHCR_REGISTRY"; do
-              for tag in $tags; do echo "--set=image.tags=${registry}/${image}:${tag}"; done
+              for ref in $refs; do echo "--set=image.tags=${registry}/${ref}"; done
             done
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
-          echo "version ${version}, image ${image}, tags: $(echo $tags)"
+          echo "version ${version}, image ${image}, tags: $(echo $refs)"
 
-      - name: Build App
+      # Builds the image, the push below reuses these layers
+      - name: Test App
+        working-directory: ${{ github.workspace }}/apps/${{ matrix.app }}
+        env:
+          PLATFORMS: ${{ steps.options.outputs.platforms }}
+        run: |
+          buildx bake test --builder buildkitd --allow=fs.read=../../tests \
+            --set=image.platform="$PLATFORMS" \
+            --set=image.no-cache="$NO_CACHE"
+
+      - name: Push App
         working-directory: ${{ github.workspace }}/apps/${{ matrix.app }}
         env:
           VERSION: ${{ steps.options.outputs.version }}
@@ -206,26 +192,18 @@ jobs:
           PLATFORMS: ${{ steps.options.outputs.platforms }}
           TAGS: ${{ steps.options.outputs.tags }}
         run: |
-          if [[ "$RELEASE" == true ]]; then
-            if [[ ! -f ~/.docker/config.json ]]; then
-              echo "::error::No registry credentials in ~/.docker/config.json, did the login step run?"
-              exit 1
-            fi
-            mapfile -t tags <<< "$TAGS"
-            output=(--set=image.output=type=image,push=true "${tags[@]}")
-          else
-            output=(--set=image.output=type=cacheonly)
+          if [[ ! -f ~/.docker/config.json ]]; then
+            echo "::error::No registry credentials in ~/.docker/config.json, did the login step run?"
+            exit 1
           fi
+          mapfile -t tags <<< "$TAGS"
           buildx bake image --builder buildkitd \
             --set=image.platform="$PLATFORMS" \
-            --set=image.no-cache="$NO_CACHE" \
             --set=image.labels.org.opencontainers.image.title="$IMAGE" \
             --set=image.labels.org.opencontainers.image.version="$VERSION" \
             --set=image.labels.org.opencontainers.image.revision="$GITHUB_SHA" \
             --set=image.labels.org.opencontainers.image.source="$GITHUB_REPOSITORY_URL" \
             --set=image.labels.org.opencontainers.image.documentation="$SOURCE" \
             --metadata-file "${RUNNER_TEMP}/metadata.json" \
-            "${output[@]}"
-          if [[ "$RELEASE" == true ]]; then
-            echo "pushed ${IMAGE}@$(jq -r '.image["containerimage.digest"]' "${RUNNER_TEMP}/metadata.json")"
-          fi
+            --set=image.output=type=image,push=true "${tags[@]}"
+          echo "pushed ${IMAGE}@$(jq -r '.image["containerimage.digest"]' "${RUNNER_TEMP}/metadata.json")"

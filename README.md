@@ -46,11 +46,13 @@ A stable release sorts above its own pre-releases, so `4.0.19-dev.3011` is skipp
 
 ## Builds
 
-[`.forgejo/workflows/release.yaml`](./.forgejo/workflows/release.yaml) runs on pushes that change `apps/` and builds each changed app on the rootless buildkitd in the cluster (home-ops [`apps/buildkit`](https://github.com/Untersander/home-ops/tree/main/apps/buildkit)).
+[`.forgejo/workflows/release.yaml`](./.forgejo/workflows/release.yaml) runs on pushes to `main` and every morning, on the rootless buildkitd in the cluster (home-ops [`apps/buildkit`](https://github.com/Untersander/home-ops/tree/main/apps/buildkit)).
 The runner has no Docker, so the job uses a standalone `buildx` with the remote driver and the bake files work the same as locally.
 
-- `main`: build and push to both registries.
-- Other branches (Renovate): build only. Renovate automerges app updates once this build has passed.
+It builds the apps changed by the push and every app whose version has no image on ghcr.io yet, tests that they start, and pushes them to both registries.
+An app that fails is not pushed and keeps its last image, while the others carry on. Its tag is still missing, so the next run tries it again. A failed rebuild that keeps its tag, such as a new base image, is not retried.
+
+- Test: the `test` target in each bake file starts the app in a build step and waits for HTTP 200 ([`tests/startup.sh`](./tests/startup.sh)). Build steps on the builder share a network, so the channels of an app test on different ports.
 - Manual: Actions → Release → Run workflow, with the app name (optionally without cache).
 
 Build locally with Docker:
@@ -59,13 +61,13 @@ Build locally with Docker:
 cd apps/dnsmasq
 docker buildx bake                     # image-local: dnsmasq:<version> in the local Docker
 docker run --rm dnsmasq:2.92_p2-r0 --version
+docker buildx bake test                # the startup test, other apps need --allow=fs.read=../../tests
 ```
 
 ## Renovate
 
-[`.forgejo/workflows/renovate.yaml`](./.forgejo/workflows/renovate.yaml) runs hourly, with the rules in [`.renovaterc.json5`](./.renovaterc.json5).
-Branch automerge is fast-forward only, so each run merges one branch and rebases the others, which then have to pass their test build again before a later run can merge them.
-Reading the build status needs the branch name as `renovate%2F...` in the API path, so the gateway in front of Forgejo has to keep escaped slashes (home-ops [`clienttrafficpolicy.yaml`](https://github.com/Untersander/home-ops/blob/main/infra/envoy-gateway/config/clienttrafficpolicy.yaml)). Otherwise Renovate gets a 404 and aborts with `Repository has changed during renovation`.
+[`.forgejo/workflows/renovate.yaml`](./.forgejo/workflows/renovate.yaml) runs once a day, with the rules in [`.renovaterc.json5`](./.renovaterc.json5).
+It merges all updates in that run without waiting for a build, majors included: the build on `main` is the test, because an app that fails is not pushed. App updates share one commit, as Renovate restarts only once per run and separate branches could not all merge.
 Package versions come from Repology (`alpine_3_24/<package>`). When the Alpine base moves to a new minor, update these names and `allowedVersions` together.
 Stable versions come from GitHub releases, where Renovate skips releases marked as pre-release. The Sonarr, Radarr and Prowlarr `-develop` apps follow the `develop` branch through the Servarr update services (`customDatasources`, same as home-operations). A new Sonarr major needs a bump of `version=` in `sonarr-develop`. The Bazarr and SABnzbd `-develop` apps take only the pre-releases from GitHub.
 
