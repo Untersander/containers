@@ -34,7 +34,7 @@ env:
   # ghcr.io links the packages to the repository through this label
   GITHUB_REPOSITORY_URL: https://github.com/Untersander/containers
   # renovate: datasource=github-releases depName=docker/buildx
-  BUILDX_VERSION: v0.38.1
+  BUILDX_VERSION: v0.38.2
 
 defaults:
   run:
