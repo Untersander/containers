@@ -7,7 +7,7 @@ variable "APP" {
 
 variable "VERSION" {
   // renovate: datasource=github-releases depName=sabnzbd/sabnzbd versioning=loose
-  default = "5.2.0RC1"
+  default = "5.2.0RC2"
 }
 
 // Semver tag of the pre-release
