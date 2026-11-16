@@ -6,7 +6,7 @@ variable "APP" {
 
 variable "VERSION" {
   // renovate: datasource=github-releases depName=Radarr/Radarr versioning=loose
-  default = "6.4.4.10685"
+  default = "7.0.3.10918"
 }
 
 variable "SOURCE" {
