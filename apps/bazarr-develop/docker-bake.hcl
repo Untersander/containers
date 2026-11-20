@@ -7,7 +7,7 @@ variable "APP" {
 
 variable "VERSION" {
   // renovate: datasource=github-releases depName=morpheus65535/bazarr
-  default = "v1.6.3-beta.35"
+  default = "v1.6.3-beta.36"
 }
 
 // Semver tag of the pre-release
