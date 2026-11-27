@@ -23,7 +23,7 @@ jobs:
           node-version: 26.13.1
 
       - name: Run Renovate
-        run: npx --yes renovate@44.263.5
+        run: npx --yes renovate@45.1.0
         env:
           RENOVATE_PLATFORM: forgejo
           RENOVATE_ENDPOINT: https://git.k8s.garden/api/v1
